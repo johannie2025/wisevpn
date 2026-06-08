@@ -5,7 +5,6 @@
     android:orientation="vertical"
     android:background="#0D1117">
 
-    <!-- Header -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -33,14 +32,13 @@
             android:textColor="#8B949E"/>
     </LinearLayout>
 
-    <!-- Status Card -->
     <LinearLayout
         android:id="@+id/status_card"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:padding="16dp"
-        android:margin="12dp"
+        android:layout_margin="12dp"
         android:background="@drawable/rounded_card"
         android:backgroundTint="#21262D">
 
@@ -74,9 +72,8 @@
             android:stateListAnimator="@null"/>
     </LinearLayout>
 
-    <!-- Server list header -->
     <TextView
-        android:id="@+id/tv_status"
+        android:id="@+id/tv_list_header"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:paddingHorizontal="16dp"
@@ -87,7 +84,6 @@
         android:textAllCaps="true"
         android:letterSpacing="0.1"/>
 
-    <!-- Loading -->
     <ProgressBar
         android:id="@+id/progress_bar"
         android:layout_width="wrap_content"
@@ -96,7 +92,6 @@
         android:layout_marginTop="32dp"
         android:visibility="gone"/>
 
-    <!-- Server list -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recycler_servers"
         android:layout_width="match_parent"
