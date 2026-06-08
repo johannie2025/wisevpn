@@ -36,7 +36,7 @@ dependencies {
     // OkHttp pour PlayerEngine (si intégré dans même projet)
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 
-    // ── ics-openvpn via JitPack (vrai tunnel OpenVPN) ───────────────────
-    implementation 'com.github.schwabe:ics-openvpn:v0.7.42'
-    // ────────────────────────────────────────────────────────────────────
+    // ics-openvpn : pas de dépendance Gradle — contrôle via Intent/AIDL
+    // L'app ics-openvpn doit être installée sur l'appareil (Play/F-Droid)
+    // WiseVpnService utilise VpnService natif Android (aucune dépendance)
 }
