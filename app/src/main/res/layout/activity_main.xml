@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#0D1117">
+
+    <!-- Header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="16dp"
+        android:gravity="center_vertical"
+        android:background="#161B22">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="🛡 WiseVPN"
+            android:textColor="#58A6FF"
+            android:textSize="22sp"
+            android:textStyle="bold"/>
+
+        <Button
+            android:id="@+id/btn_refresh"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:text="↻ Actualiser"
+            android:textSize="12sp"
+            android:backgroundTint="#21262D"
+            android:textColor="#8B949E"/>
+    </LinearLayout>
+
+    <!-- Status Card -->
+    <LinearLayout
+        android:id="@+id/status_card"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:margin="12dp"
+        android:background="@drawable/rounded_card"
+        android:backgroundTint="#21262D">
+
+        <TextView
+            android:id="@+id/tv_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="🔴 Non connecté"
+            android:textColor="#F0F6FC"
+            android:textSize="18sp"
+            android:textStyle="bold"/>
+
+        <TextView
+            android:id="@+id/tv_status_detail"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Sélectionnez un serveur et appuyez sur Connecter"
+            android:textColor="#8B949E"
+            android:textSize="13sp"
+            android:layout_marginTop="4dp"/>
+
+        <Button
+            android:id="@+id/btn_connect"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="12dp"
+            android:text="Connecter"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:backgroundTint="#1F6FEB"
+            android:stateListAnimator="@null"/>
+    </LinearLayout>
+
+    <!-- Server list header -->
+    <TextView
+        android:id="@+id/tv_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingHorizontal="16dp"
+        android:paddingBottom="8dp"
+        android:text="Serveurs VPN Gate"
+        android:textColor="#8B949E"
+        android:textSize="12sp"
+        android:textAllCaps="true"
+        android:letterSpacing="0.1"/>
+
+    <!-- Loading -->
+    <ProgressBar
+        android:id="@+id/progress_bar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="32dp"
+        android:visibility="gone"/>
+
+    <!-- Server list -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recycler_servers"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingBottom="16dp"/>
+
+</LinearLayout>

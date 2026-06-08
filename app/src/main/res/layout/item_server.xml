@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:padding="12dp"
+    android:marginHorizontal="12dp"
+    android:marginVertical="4dp"
+    android:background="@drawable/server_item_bg"
+    android:gravity="center_vertical">
+
+    <!-- Flag -->
+    <TextView
+        android:id="@+id/tv_flag"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:gravity="center"
+        android:textSize="24sp"/>
+
+    <!-- Info -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:layout_marginStart="12dp">
+
+        <TextView
+            android:id="@+id/tv_country"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#F0F6FC"
+            android:textSize="15sp"
+            android:textStyle="bold"/>
+
+        <TextView
+            android:id="@+id/tv_ip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#8B949E"
+            android:textSize="12sp"
+            android:fontFamily="monospace"/>
+    </LinearLayout>
+
+    <!-- Stats -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="end">
+
+        <TextView
+            android:id="@+id/tv_ping"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#3FB950"
+            android:textSize="12sp"/>
+
+        <TextView
+            android:id="@+id/tv_speed"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#58A6FF"
+            android:textSize="12sp"/>
+
+        <TextView
+            android:id="@+id/tv_sessions"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#8B949E"
+            android:textSize="11sp"/>
+    </LinearLayout>
+
+</LinearLayout>

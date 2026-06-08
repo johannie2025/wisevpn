@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WiseVPN</string>
+    <string name="connect">Connecter</string>
+    <string name="disconnect">Déconnecter</string>
+    <string name="cancel">Annuler</string>
+    <string name="retry">Réessayer</string>
+    <string name="loading">Chargement des serveurs…</string>
+    <string name="vpn_notification_title">WiseVPN actif</string>
+</resources>
