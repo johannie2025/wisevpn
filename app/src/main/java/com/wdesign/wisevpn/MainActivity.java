@@ -1,11 +1,10 @@
 package com.wdesign.wisevpn;
 
-import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.net.VpnService;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.Button;
@@ -20,8 +19,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
-
-    private static final int VPN_REQUEST_CODE = 100;
 
     private RecyclerView    recycler;
     private LinearLayout    layoutLoading;
@@ -86,15 +83,13 @@ public class MainActivity extends AppCompatActivity {
                     Toast.makeText(this, "Sélectionnez un serveur", Toast.LENGTH_SHORT).show();
                     return;
                 }
-                requestVpnPermission();
+                connectVpn(selectedServer);
             }
         });
-
         findViewById(R.id.btn_refresh).setOnClickListener(v -> loadServers());
     }
 
     private void loadServers() {
-        // Afficher loading
         layoutLoading.setVisibility(View.VISIBLE);
         recycler.setVisibility(View.GONE);
         tvLoadingMsg.setText("Connexion à VPN Gate…");
@@ -114,7 +109,6 @@ public class MainActivity extends AppCompatActivity {
                 }
                 updateConnectButton();
             }
-
             @Override public void onError(String message) {
                 layoutLoading.setVisibility(View.GONE);
                 tvLoadingMsg.setText("Erreur : " + message);
@@ -124,48 +118,65 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    private void requestVpnPermission() {
-        Intent intent = VpnService.prepare(this);
-        if (intent != null) startActivityForResult(intent, VPN_REQUEST_CODE);
-        else connectVpn(selectedServer);
-    }
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == VPN_REQUEST_CODE) {
-            if (resultCode == Activity.RESULT_OK) connectVpn(selectedServer);
-            else Toast.makeText(this, "Permission VPN refusée", Toast.LENGTH_SHORT).show();
-        }
-    }
+    // ── Connexion ────────────────────────────────────────────────────────
 
     private void connectVpn(ServerModel server) {
-        String ovpnPath = OvpnConfigWriter.write(this, server);
-        if (ovpnPath == null) {
-            Toast.makeText(this, "Erreur lecture config VPN", Toast.LENGTH_SHORT).show();
+        // Vérifier si ics-openvpn est installé
+        if (!IcsOpenVpnHelper.isInstalled(this)) {
+            showInstallDialog();
             return;
         }
         connectedServer = server;
         updateUiState(WiseVpnService.STATE_CONNECTING, null);
-        Intent intent = new Intent(this, WiseVpnService.class);
-        intent.setAction(WiseVpnService.ACTION_CONNECT);
-        intent.putExtra(WiseVpnService.EXTRA_OVPN_PATH,   ovpnPath);
-        intent.putExtra(WiseVpnService.EXTRA_SERVER_IP,   server.ip);
-        intent.putExtra(WiseVpnService.EXTRA_SERVER_NAME, server.countryLong);
-        startService(intent);
+        IcsOpenVpnHelper.startVpn(this, server);
     }
 
     private void disconnectVpn() {
-        Intent intent = new Intent(this, WiseVpnService.class);
-        intent.setAction(WiseVpnService.ACTION_DISCONNECT);
-        startService(intent);
+        IcsOpenVpnHelper.stopVpn(this);
+        updateUiState(WiseVpnService.STATE_DISCONNECTED, null);
     }
+
+    // ── Dialog installation ics-openvpn ──────────────────────────────────
+
+    private void showInstallDialog() {
+        new AlertDialog.Builder(this)
+            .setTitle("OpenVPN requis")
+            .setMessage(
+                "WiseVPN utilise OpenVPN for Android pour établir le tunnel sécurisé.\n\n" +
+                "L'installation est gratuite et prend moins d'une minute.")
+            .setPositiveButton("📥 Installer (Play Store)", (d, w) ->
+                IcsOpenVpnHelper.openPlayStore(this))
+            .setNegativeButton("Annuler", null)
+            .setIcon(android.R.drawable.ic_dialog_info)
+            .show();
+    }
+
+    // ── Résultat import profil ics-openvpn ───────────────────────────────
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == IcsOpenVpnHelper.REQUEST_IMPORT) {
+            if (resultCode == RESULT_OK) {
+                // Profil importé — ics-openvpn connecte automatiquement
+                updateUiState(WiseVpnService.STATE_CONNECTED, null);
+                Toast.makeText(this, "✅ Tunnel VPN actif", Toast.LENGTH_SHORT).show();
+            } else {
+                updateUiState(WiseVpnService.STATE_DISCONNECTED, null);
+                if (resultCode != RESULT_CANCELED) {
+                    Toast.makeText(this, "Connexion annulée", Toast.LENGTH_SHORT).show();
+                }
+            }
+        }
+    }
+
+    // ── UI ───────────────────────────────────────────────────────────────
 
     private void updateUiState(String state, String errorMsg) {
         currentState = state;
         switch (state) {
             case WiseVpnService.STATE_CONNECTING:
-                tvStatus.setText("⏳ Connexion en cours…");
+                tvStatus.setText("⏳ Ouverture OpenVPN…");
                 tvStatusDetail.setText(connectedServer != null ?
                     connectedServer.getCountryFlag() + " " + connectedServer.countryLong : "");
                 btnConnect.setText("Annuler");
@@ -201,8 +212,8 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateConnectButton() {
-        boolean idle = currentState.equals(WiseVpnService.STATE_DISCONNECTED) ||
-                       currentState.equals(WiseVpnService.STATE_ERROR);
+        boolean idle   = currentState.equals(WiseVpnService.STATE_DISCONNECTED) ||
+                         currentState.equals(WiseVpnService.STATE_ERROR);
         boolean active = currentState.equals(WiseVpnService.STATE_CONNECTED) ||
                          currentState.equals(WiseVpnService.STATE_CONNECTING);
         btnConnect.setEnabled((idle && selectedServer != null) || active);
@@ -210,8 +221,9 @@ public class MainActivity extends AppCompatActivity {
 
     @Override protected void onResume() {
         super.onResume();
-        IntentFilter f = new IntentFilter(WiseVpnService.BROADCAST_STATE);
-        registerReceiver(vpnReceiver, f, Context.RECEIVER_NOT_EXPORTED);
+        registerReceiver(vpnReceiver,
+            new IntentFilter(WiseVpnService.BROADCAST_STATE),
+            Context.RECEIVER_NOT_EXPORTED);
     }
 
     @Override protected void onPause() {
