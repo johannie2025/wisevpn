@@ -9,7 +9,7 @@ import android.net.VpnService;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.Button;
-import android.widget.ProgressBar;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.annotation.Nullable;
@@ -23,29 +23,23 @@ public class MainActivity extends AppCompatActivity {
 
     private static final int VPN_REQUEST_CODE = 100;
 
-    // UI
-    private RecyclerView  recycler;
-    private ProgressBar   progressBar;
-    private TextView      tvStatus, tvStatusDetail, tvBtnLabel;
-    private Button        btnConnect;
-    private View          statusCard;
+    private RecyclerView    recycler;
+    private LinearLayout    layoutLoading;
+    private TextView        tvStatus, tvStatusDetail, tvLoadingMsg;
+    private Button          btnConnect;
+    private View            statusCard;
 
-    // Data
-    private ServerAdapter   adapter;
+    private ServerAdapter     adapter;
     private List<ServerModel> servers = new ArrayList<>();
-    private ServerModel     selectedServer;
-    private ServerModel     connectedServer;
+    private ServerModel       selectedServer;
+    private ServerModel       connectedServer;
+    private String            currentState = WiseVpnService.STATE_DISCONNECTED;
 
-    // State
-    private String currentState = WiseVpnService.STATE_DISCONNECTED;
-
-    // Broadcast receiver pour états VPN
     private final BroadcastReceiver vpnReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context ctx, Intent intent) {
+        @Override public void onReceive(Context ctx, Intent intent) {
             String state = intent.getStringExtra(WiseVpnService.EXTRA_STATE);
             String error = intent.getStringExtra(WiseVpnService.EXTRA_ERROR_MSG);
-            updateUiState(state, error);
+            if (state != null) updateUiState(state, error);
         }
     };
 
@@ -53,7 +47,6 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-
         bindViews();
         setupRecycler();
         setupButtons();
@@ -62,9 +55,10 @@ public class MainActivity extends AppCompatActivity {
 
     private void bindViews() {
         recycler       = findViewById(R.id.recycler_servers);
-        progressBar    = findViewById(R.id.progress_bar);
+        layoutLoading  = findViewById(R.id.layout_loading);
         tvStatus       = findViewById(R.id.tv_status);
         tvStatusDetail = findViewById(R.id.tv_status_detail);
+        tvLoadingMsg   = findViewById(R.id.tv_loading_msg);
         btnConnect     = findViewById(R.id.btn_connect);
         statusCard     = findViewById(R.id.status_card);
     }
@@ -85,7 +79,7 @@ public class MainActivity extends AppCompatActivity {
                 disconnectVpn();
             } else {
                 if (selectedServer == null && !servers.isEmpty()) {
-                    selectedServer = servers.get(0); // auto-select meilleur serveur
+                    selectedServer = servers.get(0);
                     adapter.setSelected(0);
                 }
                 if (selectedServer == null) {
@@ -96,80 +90,63 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        Button btnRefresh = findViewById(R.id.btn_refresh);
-        btnRefresh.setOnClickListener(v -> loadServers());
+        findViewById(R.id.btn_refresh).setOnClickListener(v -> loadServers());
     }
 
     private void loadServers() {
-        progressBar.setVisibility(View.VISIBLE);
+        // Afficher loading
+        layoutLoading.setVisibility(View.VISIBLE);
         recycler.setVisibility(View.GONE);
-        tvStatus.setText("Chargement des serveurs VPN Gate...");
+        tvLoadingMsg.setText("Connexion à VPN Gate…");
+        btnConnect.setEnabled(false);
 
         VpnGateApi.fetchServers(new VpnGateApi.Callback() {
-            @Override
-            public void onSuccess(List<ServerModel> result) {
-                runOnUiThread(() -> {
-                    progressBar.setVisibility(View.GONE);
-                    recycler.setVisibility(View.VISIBLE);
-                    servers.clear();
-                    servers.addAll(result);
-                    adapter.notifyDataSetChanged();
-                    tvStatus.setText(result.size() + " serveurs disponibles");
-
-                    // Auto-sélect meilleur serveur
-                    if (!servers.isEmpty()) {
-                        selectedServer = servers.get(0);
-                        adapter.setSelected(0);
-                    }
-                    updateConnectButton();
-                });
+            @Override public void onSuccess(List<ServerModel> result) {
+                layoutLoading.setVisibility(View.GONE);
+                recycler.setVisibility(View.VISIBLE);
+                servers.clear();
+                servers.addAll(result);
+                adapter.notifyDataSetChanged();
+                tvStatus.setText(result.size() + " serveurs disponibles");
+                if (!servers.isEmpty()) {
+                    selectedServer = servers.get(0);
+                    adapter.setSelected(0);
+                }
+                updateConnectButton();
             }
 
-            @Override
-            public void onError(String message) {
-                runOnUiThread(() -> {
-                    progressBar.setVisibility(View.GONE);
-                    tvStatus.setText("Erreur: " + message);
-                    Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
-                });
+            @Override public void onError(String message) {
+                layoutLoading.setVisibility(View.GONE);
+                tvLoadingMsg.setText("Erreur : " + message);
+                tvStatus.setText("❌ Chargement échoué");
+                Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
             }
         });
     }
 
     private void requestVpnPermission() {
         Intent intent = VpnService.prepare(this);
-        if (intent != null) {
-            // Android demande permission VPN à l'utilisateur
-            startActivityForResult(intent, VPN_REQUEST_CODE);
-        } else {
-            // Permission déjà accordée
-            connectVpn(selectedServer);
-        }
+        if (intent != null) startActivityForResult(intent, VPN_REQUEST_CODE);
+        else connectVpn(selectedServer);
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == VPN_REQUEST_CODE) {
-            if (resultCode == Activity.RESULT_OK) {
-                connectVpn(selectedServer);
-            } else {
-                Toast.makeText(this, "Permission VPN refusée", Toast.LENGTH_SHORT).show();
-            }
+            if (resultCode == Activity.RESULT_OK) connectVpn(selectedServer);
+            else Toast.makeText(this, "Permission VPN refusée", Toast.LENGTH_SHORT).show();
         }
     }
 
     private void connectVpn(ServerModel server) {
-        // Écrire config .ovpn sur disque
         String ovpnPath = OvpnConfigWriter.write(this, server);
         if (ovpnPath == null) {
             Toast.makeText(this, "Erreur lecture config VPN", Toast.LENGTH_SHORT).show();
             return;
         }
-
         connectedServer = server;
         updateUiState(WiseVpnService.STATE_CONNECTING, null);
-
         Intent intent = new Intent(this, WiseVpnService.class);
         intent.setAction(WiseVpnService.ACTION_CONNECT);
         intent.putExtra(WiseVpnService.EXTRA_OVPN_PATH,   ovpnPath);
@@ -188,71 +165,56 @@ public class MainActivity extends AppCompatActivity {
         currentState = state;
         switch (state) {
             case WiseVpnService.STATE_CONNECTING:
-                tvStatus.setText("Connexion en cours...");
+                tvStatus.setText("⏳ Connexion en cours…");
                 tvStatusDetail.setText(connectedServer != null ?
                     connectedServer.getCountryFlag() + " " + connectedServer.countryLong : "");
                 btnConnect.setText("Annuler");
-                btnConnect.setBackgroundTintList(
-                    getColorStateList(android.R.color.holo_orange_dark));
-                statusCard.setBackgroundTintList(
-                    getColorStateList(android.R.color.holo_orange_light));
+                btnConnect.setBackgroundTintList(getColorStateList(android.R.color.holo_orange_dark));
+                statusCard.setBackgroundTintList(getColorStateList(android.R.color.holo_orange_light));
                 break;
-
             case WiseVpnService.STATE_CONNECTED:
                 tvStatus.setText("✅ VPN Connecté");
                 tvStatusDetail.setText(connectedServer != null ?
                     connectedServer.getCountryFlag() + " " + connectedServer.countryLong
                     + "  •  " + connectedServer.ip : "");
                 btnConnect.setText("Déconnecter");
-                btnConnect.setBackgroundTintList(
-                    getColorStateList(android.R.color.holo_red_dark));
-                statusCard.setBackgroundTintList(
-                    getColorStateList(android.R.color.holo_green_light));
+                btnConnect.setBackgroundTintList(getColorStateList(android.R.color.holo_red_dark));
+                statusCard.setBackgroundTintList(getColorStateList(android.R.color.holo_green_light));
                 break;
-
             case WiseVpnService.STATE_DISCONNECTED:
                 tvStatus.setText("🔴 Non connecté");
                 tvStatusDetail.setText("Sélectionnez un serveur et appuyez sur Connecter");
                 btnConnect.setText("Connecter");
-                btnConnect.setBackgroundTintList(
-                    getColorStateList(android.R.color.holo_blue_dark));
-                statusCard.setBackgroundTintList(
-                    getColorStateList(android.R.color.darker_gray));
+                btnConnect.setBackgroundTintList(getColorStateList(android.R.color.holo_blue_dark));
+                statusCard.setBackgroundTintList(getColorStateList(android.R.color.darker_gray));
                 connectedServer = null;
                 break;
-
             case WiseVpnService.STATE_ERROR:
                 tvStatus.setText("❌ Erreur VPN");
                 tvStatusDetail.setText(errorMsg != null ? errorMsg : "Erreur inconnue");
                 btnConnect.setText("Réessayer");
-                btnConnect.setBackgroundTintList(
-                    getColorStateList(android.R.color.holo_blue_dark));
-                statusCard.setBackgroundTintList(
-                    getColorStateList(android.R.color.holo_red_light));
+                btnConnect.setBackgroundTintList(getColorStateList(android.R.color.holo_blue_dark));
+                statusCard.setBackgroundTintList(getColorStateList(android.R.color.holo_red_light));
                 break;
         }
         updateConnectButton();
     }
 
     private void updateConnectButton() {
-        boolean canConnect = selectedServer != null &&
-            currentState.equals(WiseVpnService.STATE_DISCONNECTED);
-        boolean isConnectedOrConnecting =
-            currentState.equals(WiseVpnService.STATE_CONNECTED) ||
-            currentState.equals(WiseVpnService.STATE_CONNECTING);
-        btnConnect.setEnabled(canConnect || isConnectedOrConnecting);
+        boolean idle = currentState.equals(WiseVpnService.STATE_DISCONNECTED) ||
+                       currentState.equals(WiseVpnService.STATE_ERROR);
+        boolean active = currentState.equals(WiseVpnService.STATE_CONNECTED) ||
+                         currentState.equals(WiseVpnService.STATE_CONNECTING);
+        btnConnect.setEnabled((idle && selectedServer != null) || active);
     }
 
-    @Override
-    protected void onResume() {
+    @Override protected void onResume() {
         super.onResume();
-        registerReceiver(vpnReceiver,
-            new IntentFilter(WiseVpnService.BROADCAST_STATE),
-            Context.RECEIVER_NOT_EXPORTED);
+        IntentFilter f = new IntentFilter(WiseVpnService.BROADCAST_STATE);
+        registerReceiver(vpnReceiver, f, Context.RECEIVER_NOT_EXPORTED);
     }
 
-    @Override
-    protected void onPause() {
+    @Override protected void onPause() {
         super.onPause();
         try { unregisterReceiver(vpnReceiver); } catch (Exception ignored) {}
     }

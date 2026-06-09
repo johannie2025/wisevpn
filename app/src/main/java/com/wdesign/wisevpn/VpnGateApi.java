@@ -2,12 +2,15 @@ package com.wdesign.wisevpn;
 
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Base64;
 import android.util.Log;
+
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -15,10 +18,14 @@ import java.util.concurrent.Executors;
 public class VpnGateApi {
 
     private static final String TAG = "VpnGateApi";
-    private static final String API_URL = "https://www.vpngate.net/api/iphone/";
-    private static final String MIRROR_URL = "http://168.126.63.1/api/iphone/";
 
-    // Utilisation d'un Executor moderne à la place d'AsyncTask pour éviter les blocages de threads
+    // Miroirs VPN Gate — on essaie dans l'ordre
+    private static final String[] ENDPOINTS = {
+        "https://www.vpngate.net/api/iphone/",
+        "https://vpngate.net/api/iphone/",
+        "http://www.vpngate.net/api/iphone/"
+    };
+
     private static final ExecutorService executor = Executors.newSingleThreadExecutor();
     private static final Handler mainHandler = new Handler(Looper.getMainLooper());
 
@@ -29,129 +36,133 @@ public class VpnGateApi {
 
     public static void fetchServers(Callback callback) {
         executor.execute(() -> {
-            String errorMsg = "Erreur de connexion aux serveurs";
-            List<ServerModel> list = fetchFrom(API_URL);
-            
-            if (list == null || list.isEmpty()) {
-                Log.w(TAG, "API principale échouée ou bloquée, tentative sur le miroir...");
-                list = fetchFrom(MIRROR_URL);
+            List<ServerModel> result = null;
+            String lastError = "Aucun serveur disponible";
+
+            for (String endpoint : ENDPOINTS) {
+                Log.d(TAG, "Tentative: " + endpoint);
+                try {
+                    result = fetchFrom(endpoint);
+                    if (result != null && !result.isEmpty()) break;
+                } catch (Exception e) {
+                    lastError = e.getMessage();
+                    Log.w(TAG, "Échec " + endpoint + ": " + e.getMessage());
+                }
             }
 
-            if (list != null && !list.isEmpty()) {
-                final List<ServerModel> resultList = list;
-                mainHandler.post(() -> callback.onSuccess(resultList));
+            if (result != null && !result.isEmpty()) {
+                // Trier : ping croissant, vitesse décroissante
+                Collections.sort(result, (a, b) -> {
+                    if (a.ping != b.ping) return Long.compare(a.ping, b.ping);
+                    return Long.compare(b.speed, a.speed);
+                });
+                final List<ServerModel> finalResult = result;
+                mainHandler.post(() -> callback.onSuccess(finalResult));
             } else {
-                mainHandler.post(() -> callback.onError("Impossible de charger la liste des serveurs VPN."));
+                final String finalError = lastError;
+                mainHandler.post(() -> callback.onError("Impossible de charger VPN Gate: " + finalError));
             }
         });
     }
 
-    private static List<ServerModel> fetchFrom(String urlString) {
+    private static List<ServerModel> fetchFrom(String urlStr) throws Exception {
         HttpURLConnection conn = null;
-        BufferedReader reader = null;
         try {
-            URL url = new URL(urlString);
+            URL url = new URL(urlStr);
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
-            conn.setConnectTimeout(15000); // 15 secondes max pour se connecter
-            conn.setReadTimeout(15000);    // 15 secondes max pour lire les données
-            
-            // CRITIQUE : Ajout d'un User-Agent pour éviter que VPN Gate rejette ou ignore la requête
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36");
+            conn.setConnectTimeout(12_000);
+            conn.setReadTimeout(20_000);
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
             conn.setRequestProperty("Accept", "*/*");
+            conn.setInstanceFollowRedirects(true);
 
-            int responseCode = conn.getResponseCode();
-            if (responseCode != HttpURLConnection.HTTP_OK) {
-                Log.e(TAG, "Erreur HTTP sur " + urlString + " : " + responseCode);
-                return null;
-            }
+            int code = conn.getResponseCode();
+            Log.d(TAG, urlStr + " → HTTP " + code);
+            if (code != 200) return null;
 
-            reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+            BufferedReader br = new BufferedReader(
+                new InputStreamReader(conn.getInputStream(), "UTF-8"));
+
             List<ServerModel> servers = new ArrayList<>();
             String line;
-            boolean isHeaderSkipped = false;
 
-            while ((line = reader.readLine()) != null) {
-                line = line.trim();
-                // Ignorer les lignes de commentaires ou vides
-                if (line.startsWith("*") || line.isEmpty()) {
-                    continue;
-                }
-                // Ignorer la ligne d'en-tête du fichier CSV (HostName,IP,Score,etc.)
-                if (!isHeaderSkipped) {
-                    isHeaderSkipped = true;
-                    continue;
-                }
+            /*
+             * Format CSV VPN Gate :
+             *   Ligne 1 : "*vpn_servers"  (commentaire étoile)
+             *   Ligne 2 : "#HostName,IP,Score,Ping,Speed,CountryLong,CountryShort,
+             *              NumVpnSessions,Uptime,TotalUsers,TotalTraffic,LogType,
+             *              Operator,Message,OpenVPN_ConfigData_Base64"
+             *   Ligne 3+ : données
+             *   Dernière : "*"
+             */
+            while ((line = br.readLine()) != null) {
+                if (line.startsWith("*")) continue;   // commentaires
+                if (line.startsWith("#")) continue;   // header colonnes
+                if (line.trim().isEmpty()) continue;
 
-                ServerModel s = parseCsvLine(line);
-                if (s != null) {
-                    servers.add(s);
-                }
+                ServerModel s = parseLine(line);
+                if (s != null) servers.add(s);
             }
+            br.close();
+            Log.d(TAG, "Parsé " + servers.size() + " serveurs depuis " + urlStr);
             return servers;
 
-        } catch (Exception e) {
-            Log.e(TAG, "Erreur lors du fetch depuis " + urlString, e);
-            return null;
         } finally {
-            if (reader != null) {
-                try { reader.close(); } catch (Exception ignored) {}
-            }
-            if (conn != null) {
-                conn.disconnect();
-            }
+            if (conn != null) conn.disconnect();
         }
     }
 
-    private static ServerModel parseCsvLine(String line) {
+    private static ServerModel parseLine(String line) {
         try {
-            String[] tokens = line.split(",");
-            if (tokens.length < 15) return null; // S'assurer que la ligne contient toutes les infos
+            // Split limité à 15 pour garder le base64 intact (peut contenir des +/=)
+            String[] c = line.split(",", 15);
+            if (c.length < 15) return null;
 
-            ServerModel s = new ServerModel();
-            s.hostName        = tokens[0];
-            s.ip              = tokens[1];
-            s.ping            = parseLong(tokens[4]);
-            s.speed           = parseLong(tokens[5]);
-            s.countryLong     = tokens[6];
-            s.countryShort    = tokens[7];
-            s.numVpnSessions  = parseInt(tokens[8]);
-            s.totalUsers      = parseLong(tokens[13]);
-            s.ovpnConfigBase64 = tokens[14]; // Le fichier .ovpn brut en Base64
+            String b64 = c[14].trim();
+            if (b64.isEmpty()) return null;
 
-            // Parsing des ports de secours à partir du fichier de config si présents
-            if (s.ovpnConfigBase64 != null && !s.ovpnConfigBase64.isEmpty()) {
-                s.supportsOpenVpnTcp = true; // Par défaut VPN Gate fournit principalement du TCP
-                try {
-                    String decoded = new String(android.util.Base64.decode(
-                            s.ovpnConfigBase64, android.util.Base64.DEFAULT));
-                    for (String l : decoded.split("\n")) {
-                        if (l.startsWith("remote ")) {
-                            String[] parts = l.trim().split("\\s+");
-                            if (parts.length >= 3) {
-                                s.openVpnTcpPort = Integer.parseInt(parts[2]);
-                            }
-                            if (parts.length >= 4 && parts[3].equalsIgnoreCase("udp")) {
-                                s.supportsOpenVpnUdp = true;
-                                s.openVpnUdpPort = s.openVpnTcpPort;
-                            }
-                        }
+            ServerModel s   = new ServerModel();
+            s.hostName      = c[0].trim();
+            s.ip            = c[1].trim();
+            s.ping          = toLong(c[3]);
+            s.speed         = toLong(c[4]);
+            s.countryLong   = c[5].trim();
+            s.countryShort  = c[6].trim();
+            s.numVpnSessions= (int) toLong(c[7]);
+            s.totalUsers    = toLong(c[9]);
+            s.ovpnConfigBase64 = b64;
+            s.supportsOpenVpnTcp = true;
+            s.openVpnTcpPort = 1194;
+            s.openVpnUdpPort = 1194;
+
+            // Extraire le port réel depuis la config décodée
+            try {
+                String cfg = new String(Base64.decode(b64, Base64.DEFAULT), "UTF-8");
+                for (String l : cfg.split("\n")) {
+                    l = l.trim();
+                    if (l.startsWith("remote ")) {
+                        String[] p = l.split("\\s+");
+                        if (p.length >= 3) s.openVpnTcpPort = (int) toLong(p[2]);
+                        s.supportsOpenVpnUdp = p.length >= 4 && "udp".equalsIgnoreCase(p[3]);
+                        if (s.supportsOpenVpnUdp) s.openVpnUdpPort = s.openVpnTcpPort;
+                        break;
                     }
-                } catch (Exception ignored) {}
-            }
+                }
+            } catch (Exception ignored) {}
+
+            // Ignorer serveurs sans IP valide
+            if (s.ip.isEmpty() || !s.ip.matches("\\d+\\.\\d+\\.\\d+\\.\\d+")) return null;
+
             return s;
 
         } catch (Exception e) {
-            Log.w(TAG, "Ligne CSV corrompue ignorée : " + e.getMessage());
+            Log.v(TAG, "Skip ligne: " + e.getMessage());
             return null;
         }
     }
 
-    private static long parseLong(String s) {
+    private static long toLong(String s) {
         try { return Long.parseLong(s.trim()); } catch (Exception e) { return 0; }
-    }
-    
-    private static int parseInt(String s) {
-        try { return Integer.parseInt(s.trim()); } catch (Exception e) { return 0; }
     }
 }
