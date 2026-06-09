@@ -19,15 +19,20 @@ public class VpnGateApi {
 
     private static final String TAG = "VpnGateApi";
 
-    // Miroirs VPN Gate — on essaie dans l'ordre
+    /**
+     * Ordre de tentative :
+     * 1. Proxy PHP sur wise.alwaysdata.net (toujours accessible depuis Afrique Centrale)
+     * 2. API VPN Gate directe (fonctionne si pas géoblocée)
+     * 3. Fallback HTTP
+     */
     private static final String[] ENDPOINTS = {
+        "https://wise.alwaysdata.net/vpngate_proxy.php",
         "https://www.vpngate.net/api/iphone/",
-        "https://vpngate.net/api/iphone/",
         "http://www.vpngate.net/api/iphone/"
     };
 
-    private static final ExecutorService executor = Executors.newSingleThreadExecutor();
-    private static final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private static final ExecutorService executor    = Executors.newSingleThreadExecutor();
+    private static final Handler         mainHandler = new Handler(Looper.getMainLooper());
 
     public interface Callback {
         void onSuccess(List<ServerModel> servers);
@@ -36,31 +41,33 @@ public class VpnGateApi {
 
     public static void fetchServers(Callback callback) {
         executor.execute(() -> {
-            List<ServerModel> result = null;
-            String lastError = "Aucun serveur disponible";
+            List<ServerModel> result  = null;
+            String            lastErr = "Aucun endpoint disponible";
 
             for (String endpoint : ENDPOINTS) {
-                Log.d(TAG, "Tentative: " + endpoint);
+                Log.d(TAG, "Tentative : " + endpoint);
                 try {
                     result = fetchFrom(endpoint);
-                    if (result != null && !result.isEmpty()) break;
+                    if (result != null && !result.isEmpty()) {
+                        Log.d(TAG, "✓ " + result.size() + " serveurs via " + endpoint);
+                        break;
+                    }
                 } catch (Exception e) {
-                    lastError = e.getMessage();
-                    Log.w(TAG, "Échec " + endpoint + ": " + e.getMessage());
+                    lastErr = e.getMessage();
+                    Log.w(TAG, "✗ " + endpoint + " : " + e.getMessage());
                 }
             }
 
             if (result != null && !result.isEmpty()) {
-                // Trier : ping croissant, vitesse décroissante
                 Collections.sort(result, (a, b) -> {
                     if (a.ping != b.ping) return Long.compare(a.ping, b.ping);
                     return Long.compare(b.speed, a.speed);
                 });
-                final List<ServerModel> finalResult = result;
-                mainHandler.post(() -> callback.onSuccess(finalResult));
+                final List<ServerModel> ok = result;
+                mainHandler.post(() -> callback.onSuccess(ok));
             } else {
-                final String finalError = lastError;
-                mainHandler.post(() -> callback.onError("Impossible de charger VPN Gate: " + finalError));
+                final String err = lastErr;
+                mainHandler.post(() -> callback.onError(err));
             }
         });
     }
@@ -73,8 +80,8 @@ public class VpnGateApi {
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(12_000);
             conn.setReadTimeout(20_000);
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
-            conn.setRequestProperty("Accept", "*/*");
+            conn.setRequestProperty("User-Agent",
+                "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36");
             conn.setInstanceFollowRedirects(true);
 
             int code = conn.getResponseCode();
@@ -87,25 +94,14 @@ public class VpnGateApi {
             List<ServerModel> servers = new ArrayList<>();
             String line;
 
-            /*
-             * Format CSV VPN Gate :
-             *   Ligne 1 : "*vpn_servers"  (commentaire étoile)
-             *   Ligne 2 : "#HostName,IP,Score,Ping,Speed,CountryLong,CountryShort,
-             *              NumVpnSessions,Uptime,TotalUsers,TotalTraffic,LogType,
-             *              Operator,Message,OpenVPN_ConfigData_Base64"
-             *   Ligne 3+ : données
-             *   Dernière : "*"
-             */
             while ((line = br.readLine()) != null) {
-                if (line.startsWith("*")) continue;   // commentaires
-                if (line.startsWith("#")) continue;   // header colonnes
+                if (line.startsWith("*")) continue;  // commentaires
+                if (line.startsWith("#")) continue;  // header colonnes
                 if (line.trim().isEmpty()) continue;
-
                 ServerModel s = parseLine(line);
                 if (s != null) servers.add(s);
             }
             br.close();
-            Log.d(TAG, "Parsé " + servers.size() + " serveurs depuis " + urlStr);
             return servers;
 
         } finally {
@@ -115,28 +111,31 @@ public class VpnGateApi {
 
     private static ServerModel parseLine(String line) {
         try {
-            // Split limité à 15 pour garder le base64 intact (peut contenir des +/=)
             String[] c = line.split(",", 15);
             if (c.length < 15) return null;
 
             String b64 = c[14].trim();
             if (b64.isEmpty()) return null;
 
-            ServerModel s   = new ServerModel();
-            s.hostName      = c[0].trim();
-            s.ip            = c[1].trim();
-            s.ping          = toLong(c[3]);
-            s.speed         = toLong(c[4]);
-            s.countryLong   = c[5].trim();
-            s.countryShort  = c[6].trim();
-            s.numVpnSessions= (int) toLong(c[7]);
-            s.totalUsers    = toLong(c[9]);
-            s.ovpnConfigBase64 = b64;
-            s.supportsOpenVpnTcp = true;
-            s.openVpnTcpPort = 1194;
-            s.openVpnUdpPort = 1194;
+            // Valider IP
+            String ip = c[1].trim();
+            if (ip.isEmpty() || !ip.matches("\\d+\\.\\d+\\.\\d+\\.\\d+")) return null;
 
-            // Extraire le port réel depuis la config décodée
+            ServerModel s    = new ServerModel();
+            s.hostName       = c[0].trim();
+            s.ip             = ip;
+            s.ping           = toLong(c[3]);
+            s.speed          = toLong(c[4]);
+            s.countryLong    = c[5].trim();
+            s.countryShort   = c[6].trim();
+            s.numVpnSessions = (int) toLong(c[7]);
+            s.totalUsers     = toLong(c[9]);
+            s.ovpnConfigBase64   = b64;
+            s.supportsOpenVpnTcp = true;
+            s.openVpnTcpPort     = 1194;
+            s.openVpnUdpPort     = 1194;
+
+            // Lire le port réel depuis le .ovpn
             try {
                 String cfg = new String(Base64.decode(b64, Base64.DEFAULT), "UTF-8");
                 for (String l : cfg.split("\n")) {
@@ -151,13 +150,9 @@ public class VpnGateApi {
                 }
             } catch (Exception ignored) {}
 
-            // Ignorer serveurs sans IP valide
-            if (s.ip.isEmpty() || !s.ip.matches("\\d+\\.\\d+\\.\\d+\\.\\d+")) return null;
-
             return s;
 
         } catch (Exception e) {
-            Log.v(TAG, "Skip ligne: " + e.getMessage());
             return null;
         }
     }
